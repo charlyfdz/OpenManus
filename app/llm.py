@@ -1,4 +1,5 @@
 import math
+import re
 from typing import Dict, List, Optional, Union
 
 import tiktoken
@@ -40,6 +41,18 @@ MULTIMODAL_MODELS = [
     "claude-3-sonnet-20240229",
     "claude-3-haiku-20240307",
 ]
+
+
+class ApproximateTokenizer:
+    """Small offline fallback for local or otherwise unknown model names.
+
+    tiktoken may try to download an encoding when a model is not in its
+    catalogue. Local Ollama models do not need that network access just to
+    estimate token counts, so use a conservative word/punctuation estimate.
+    """
+
+    def encode(self, text: str) -> List[str]:
+        return re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
 
 
 class TokenCounter:
@@ -209,9 +222,13 @@ class LLM:
             # Initialize tokenizer
             try:
                 self.tokenizer = tiktoken.encoding_for_model(self.model)
-            except KeyError:
-                # If the model is not in tiktoken's presets, use cl100k_base as default
-                self.tokenizer = tiktoken.get_encoding("cl100k_base")
+            except Exception as exc:
+                # Unknown/local models can make tiktoken download an encoding.
+                # Keep local Ollama runs offline with an approximate counter.
+                logger.warning(
+                    f"Using approximate offline tokenizer for model {self.model}: {exc}"
+                )
+                self.tokenizer = ApproximateTokenizer()
 
             if self.api_type == "azure":
                 self.client = AsyncAzureOpenAI(
